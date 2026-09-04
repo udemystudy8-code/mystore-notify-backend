@@ -44,11 +44,12 @@ async function sendWhatsApp(sub) {
         })
     });
     const data = await resp.json();
-    console.log('WhatsApp send result for', sub.phone, JSON.stringify(data));
+    console.log('WhatsApp send result for', sub.phone, resp.status, JSON.stringify(data));
     return resp.ok;
 }
 
 async function checkStock() {
+    console.log('checkStock running, subscribers:', subscribers.length);
     if (subscribers.length === 0) return;
 
 const byUrl = {};
@@ -62,12 +63,17 @@ const notified = [];
 for (const productUrl of Object.keys(byUrl)) {
     try {
         const jsonUrl = productUrl.split('?')[0].replace(/\/$/, '') + '.js';
+        console.log('Checking', jsonUrl);
         const resp = await fetch(jsonUrl);
-        if (!resp.ok) continue;
+        if (!resp.ok) {
+            console.log('Fetch failed', resp.status);
+            continue;
+        }
         const product = await resp.json();
 
     for (const sub of byUrl[productUrl]) {
         const variant = (product.variants || []).find(v => String(v.id) === sub.variantId);
+        console.log('Variant', sub.variantId, 'available:', variant && variant.available);
         if (variant && variant.available) {
             console.log('Back in stock, notifying:', sub.phone, sub.variantId);
             const ok = await sendWhatsApp(sub).catch(err => {
@@ -86,11 +92,16 @@ for (const sub of notified) {
     const idx = subscribers.indexOf(sub);
     if (idx > -1) subscribers.splice(idx, 1);
 }
+    console.log('checkStock done, notified:', notified.length, 'remaining:', subscribers.length);
 }
 
-app.post('/webhook/inventory', (req, res) => {
+app.post('/webhook/inventory', async (req, res) => {
+    try {
+        await checkStock();
+    } catch (err) {
+        console.error('checkStock error:', err);
+    }
     res.sendStatus(200);
-    checkStock().catch(err => console.error('checkStock error:', err));
 });
 
 setInterval(() => {
