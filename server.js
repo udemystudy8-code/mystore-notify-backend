@@ -22,6 +22,33 @@ app.post('/notify', (req, res) => {
     res.json({ success: true });
 });
 
+app.get('/test-whatsapp', async (req, res) => {
+    try {
+        const resp = await fetch(`https://graph.facebook.com/v18.0/${process.env.PHONE_ID}/messages`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${process.env.WA_TOKEN}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                messaging_product: 'whatsapp',
+                to: '918585918999',
+                type: 'template',
+                template: {
+                    name: 'hello_world',
+                    language: { code: 'en_US' }
+                }
+            })
+        });
+        const data = await resp.json();
+        console.log('Test WhatsApp send result:', resp.status, JSON.stringify(data));
+        res.json({ status: resp.status, data });
+    } catch (err) {
+        console.error('Test WhatsApp error:', err);
+        res.status(500).json({ error: String(err) });
+    }
+});
+
 async function sendWhatsApp(sub) {
     const resp = await fetch(`https://graph.facebook.com/v18.0/${process.env.PHONE_ID}/messages`, {
         method: 'POST',
