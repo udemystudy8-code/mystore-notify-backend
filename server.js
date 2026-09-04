@@ -60,14 +60,10 @@ async function sendWhatsApp(sub) {
             messaging_product: 'whatsapp',
             to: sub.phone,
             type: 'template',
-            template: {
-                name: 'back_in_stock',
-                language: { code: 'en' },
-                components: [{ type: 'body', parameters: [
-                    { type: 'text', text: sub.productTitle },
-                    { type: 'text', text: sub.productUrl }
-                    ]}]
-            }
+template: {
+    name: 'hello_world',
+    language: { code: 'en_US' }
+}
         })
     });
     const data = await resp.json();
