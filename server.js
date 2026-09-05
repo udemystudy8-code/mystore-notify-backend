@@ -12,7 +12,8 @@ app.use((req, res, next) => {
 
 const subscribers = [];
 
-async function sendWhatsApp(sub) {
+// Generic helper: send any approved WhatsApp template message.
+async function sendTemplate(phone, templateName, languageCode) {
     const resp = await fetch(`https://graph.facebook.com/v18.0/${process.env.PHONE_ID}/messages`, {
         method: 'POST',
         headers: {
@@ -21,17 +22,41 @@ async function sendWhatsApp(sub) {
         },
         body: JSON.stringify({
             messaging_product: 'whatsapp',
-            to: sub.phone,
+            to: phone,
             type: 'template',
             template: {
-                name: 'hello_world',
-                language: { code: 'en_US' }
+                name: templateName,
+                language: { code: languageCode }
             }
         })
     });
     const data = await resp.json();
-    console.log('WhatsApp send result for', sub.phone, resp.status, JSON.stringify(data));
+    console.log('WhatsApp send result for', phone, templateName, resp.status, JSON.stringify(data));
     return resp.ok;
+}
+
+// Used by checkStock() when an item a customer subscribed to is actually
+// back in stock. Uses the approved "back_in_stock" template ("Hi! Great
+// news, the size you wanted is back in stock...") since that message is
+// only ever true at this point in the flow.
+async function sendWhatsApp(sub) {
+    return sendTemplate(sub.phone, 'back_in_stock', 'en');
+}
+
+// Used the moment someone clicks "Notify me" — confirms we received the
+// request. Deliberately NOT the back_in_stock template (the item is sold
+// out at this point, so "it's back in stock" would be false). Falls back to
+// hello_world until a proper "we got your request" template is approved
+// (notify_confirmation, submitted for Meta review).
+async function sendConfirmation(phone) {
+    try {
+        const ok = await sendTemplate(phone, 'notify_confirmation', 'en');
+        if (ok) return true;
+        console.log('notify_confirmation send not ok, falling back to hello_world');
+    } catch (err) {
+        console.error('notify_confirmation send failed, falling back to hello_world:', err);
+    }
+    return sendTemplate(phone, 'hello_world', 'en_US');
 }
 
 app.post('/notify', async (req, res) => {
@@ -47,7 +72,7 @@ app.post('/notify', async (req, res) => {
     // restock-detection loop below, which still runs separately.
     let confirmSent = false;
     try {
-        confirmSent = await sendWhatsApp({ phone });
+        confirmSent = await sendConfirmation(phone);
     } catch (err) {
         console.error('Immediate confirm send failed:', err);
     }
@@ -68,8 +93,8 @@ app.get('/test-whatsapp', async (req, res) => {
                 to: '918585918999',
                 type: 'template',
                 template: {
-                    name: 'hello_world',
-                    language: { code: 'en_US' }
+                    name: 'back_in_stock',
+                    language: { code: 'en' }
                 }
             })
         });
