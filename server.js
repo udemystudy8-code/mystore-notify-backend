@@ -12,8 +12,28 @@ app.use((req, res, next) => {
 
 const subscribers = [];
 
+// Meta's WhatsApp API matches recipients (and the sandbox allow-list) against
+// the full E.164 number including country code. Shopify's storefront just
+// collects a raw 10-digit Indian mobile number with no country code, so
+// "8585918999" gets saved/sent as-is and never matches the allow-listed
+// "918585918999" — Meta silently rejects it as "not in allowed list", even
+// though it's the same phone. Normalize every number to include the 91
+// country code before it's ever saved or sent.
+function normalizePhone(raw) {
+    let digits = String(raw || '').replace(/\D/g, '');
+    if (digits.length === 10) {
+        digits = '91' + digits; // bare local mobile number
+    } else if (digits.length === 11 && digits.startsWith('0')) {
+        digits = '91' + digits.slice(1); // leading trunk 0
+    }
+    // 12-digit numbers already starting with 91 (or any other country code
+    // length) are left untouched.
+    return digits;
+}
+
 // Generic helper: send any approved WhatsApp template message.
 async function sendTemplate(phone, templateName, languageCode) {
+    const to = normalizePhone(phone);
     const resp = await fetch(`https://graph.facebook.com/v18.0/${process.env.PHONE_ID}/messages`, {
         method: 'POST',
         headers: {
@@ -22,7 +42,7 @@ async function sendTemplate(phone, templateName, languageCode) {
         },
         body: JSON.stringify({
             messaging_product: 'whatsapp',
-            to: phone,
+            to,
             type: 'template',
             template: {
                 name: templateName,
@@ -31,7 +51,7 @@ async function sendTemplate(phone, templateName, languageCode) {
         })
     });
     const data = await resp.json();
-    console.log('WhatsApp send result for', phone, templateName, resp.status, JSON.stringify(data));
+    console.log('WhatsApp send result for', to, templateName, resp.status, JSON.stringify(data));
     return resp.ok;
 }
 
@@ -60,12 +80,13 @@ async function sendConfirmation(phone) {
 }
 
 app.post('/notify', async (req, res) => {
-    const { phone, variantId, variantTitle, productTitle, productUrl } = req.body;
-    if (!phone || !variantId || !productUrl) {
+    const { phone: rawPhone, variantId, variantTitle, productTitle, productUrl } = req.body;
+    if (!rawPhone || !variantId || !productUrl) {
         return res.status(400).json({ success: false, error: 'Missing fields' });
     }
+    const phone = normalizePhone(rawPhone);
     subscribers.push({ phone, variantId: String(variantId), productTitle, productUrl });
-    console.log('Saved subscriber:', phone, variantId, 'total:', subscribers.length);
+    console.log('Saved subscriber:', phone, '(raw:', rawPhone + ')', variantId, 'total:', subscribers.length);
 
     // Send an immediate WhatsApp confirmation every time someone submits the form,
     // regardless of which size/variant it was for. This is independent of the
