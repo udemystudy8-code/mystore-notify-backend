@@ -56,10 +56,18 @@ async function sendTemplate(phone, templateName, languageCode) {
 }
 
 // Used by checkStock() when an item a customer subscribed to is actually
-// back in stock. Uses the approved "back_in_stock" template ("Hi! Great
-// news, the size you wanted is back in stock...") since that message is
-// only ever true at this point in the flow.
+// back in stock. "back_in_stock" is a Marketing-category template, and
+// WhatsApp does not guarantee delivery of Marketing templates the way it
+// does Utility ones — messages can come back "accepted" from the API and
+// still never reach the device. "restock_alert_v2" is the Utility-category
+// replacement (same info, phrased as a status update on the customer's own
+// request rather than a promo) which gets reliable delivery like
+// notify_confirmation does. Falls back to the old Marketing template only
+// if the new one isn't approved yet.
 async function sendWhatsApp(sub) {
+    const ok = await sendTemplate(sub.phone, 'restock_alert_v2', 'en');
+    if (ok) return true;
+    console.log('restock_alert_v2 send not ok, falling back to back_in_stock');
     return sendTemplate(sub.phone, 'back_in_stock', 'en');
 }
 
@@ -114,7 +122,7 @@ app.get('/test-whatsapp', async (req, res) => {
                 to: '918585918999',
                 type: 'template',
                 template: {
-                    name: 'back_in_stock',
+                    name: 'restock_alert_v2',
                     language: { code: 'en' }
                 }
             })
