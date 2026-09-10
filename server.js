@@ -463,7 +463,7 @@ const DASHBOARD_HTML = `<!doctype html>
 
   function csvField(val){
     var s = (val === null || val === undefined) ? '' : String(val);
-    if (/[",\n]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"';
+    if (/[",\\n]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"';
     return s;
   }
 
