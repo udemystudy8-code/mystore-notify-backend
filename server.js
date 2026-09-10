@@ -314,4 +314,193 @@ events: allEvents.slice().reverse()
 });
 });
 
+// Dashboard page itself — served from this same domain (not claude.ai) so its
+// fetch() calls to /admin/stats are same-origin and never get blocked as
+// cross-site. Static HTML/CSS/JS only, no external calls besides this API.
+const DASHBOARD_HTML = `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Notify Me Dashboard</title>
+<style>
+  :root{
+    --bg:#f6f7f5; --card:#ffffff; --border:#e3e5e0; --text:#1c1f1a; --muted:#6b7268;
+    --accent:#1f8a4c; --accent-soft:#e6f4ec; --waiting:#b8860b; --waiting-soft:#fbf1dc;
+    --danger:#b3261e; --input-bg:#ffffff;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#151713; --card:#1e211c; --border:#2c2f28; --text:#eef0ea; --muted:#9aa196;
+      --accent:#3fbd74; --accent-soft:#173824; --waiting:#e0b13a; --waiting-soft:#332608;
+      --danger:#ff6b62; --input-bg:#262a22;
+    }
+  }
+  *{box-sizing:border-box;}
+  body{background:var(--bg); color:var(--text); margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; padding:20px 16px 48px;}
+  .wrap{max-width:920px; margin:0 auto;}
+  h1{font-size:1.35rem; margin:0 0 4px;}
+  .sub{color:var(--muted); font-size:0.88rem; margin:0 0 20px;}
+  .setup{background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px; margin-bottom:20px;}
+  .setup label{display:block; font-size:0.78rem; color:var(--muted); margin-bottom:4px;}
+  .setup-row{display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;}
+  .field{flex:1; min-width:180px;}
+  input[type="password"]{width:100%; padding:9px 10px; border-radius:8px; border:1px solid var(--border); background:var(--input-bg); color:var(--text); font-size:0.9rem;}
+  button{padding:9px 16px; border-radius:8px; border:1px solid var(--accent); background:var(--accent); color:#fff; font-size:0.9rem; cursor:pointer; font-weight:600;}
+  button.secondary{background:transparent; color:var(--text); border-color:var(--border); font-weight:500;}
+  button:disabled{opacity:0.55; cursor:default;}
+  .status-line{font-size:0.82rem; color:var(--muted); margin-top:10px;}
+  .status-line.error{color:var(--danger);}
+  .cards{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-bottom:20px;}
+  .card{background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px;}
+  .card .n{font-size:1.7rem; font-weight:700; line-height:1.1;}
+  .card .l{font-size:0.8rem; color:var(--muted); margin-top:4px;}
+  .toolbar{display:flex; gap:8px; align-items:center; margin-bottom:12px; flex-wrap:wrap;}
+  .tab{padding:6px 12px; border-radius:999px; border:1px solid var(--border); background:transparent; color:var(--text); font-size:0.82rem; cursor:pointer; font-weight:500;}
+  .tab.active{background:var(--accent-soft); border-color:var(--accent); color:var(--accent);}
+  .table-wrap{background:var(--card); border:1px solid var(--border); border-radius:12px; overflow:auto; max-width:100%;}
+  table{border-collapse:collapse; width:100%; font-size:0.85rem; min-width:560px;}
+  th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--border); white-space:nowrap;}
+  th{color:var(--muted); font-weight:600; font-size:0.75rem; text-transform:uppercase; letter-spacing:0.03em;}
+  tr:last-child td{border-bottom:none;}
+  .badge{display:inline-block; padding:2px 9px; border-radius:999px; font-size:0.72rem; font-weight:600;}
+  .badge.signup{background:var(--waiting-soft); color:var(--waiting);}
+  .badge.notified{background:var(--accent-soft); color:var(--accent);}
+  .empty{padding:32px 16px; text-align:center; color:var(--muted); font-size:0.88rem;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Notify Me Dashboard</h1>
+  <p class="sub">Every WhatsApp restock-alert signup on your store, logged and counted.</p>
+
+  <div class="setup">
+    <div class="setup-row">
+      <div class="field">
+        <label for="adminKey">Admin key</label>
+        <input type="password" id="adminKey" placeholder="ADMIN_KEY value">
+      </div>
+      <button id="loadBtn" type="button">Load</button>
+    </div>
+    <div class="status-line" id="statusLine">Enter your admin key and click Load. (This service can take up to a minute to wake up if it has been idle.)</div>
+  </div>
+
+  <div id="content" hidden>
+    <div class="cards">
+      <div class="card"><div class="n" id="statSignups">-</div><div class="l">Total notify-me signups</div></div>
+      <div class="card"><div class="n" id="statNotified">-</div><div class="l">Restock alerts sent</div></div>
+      <div class="card"><div class="n" id="statWaiting">-</div><div class="l">Currently waiting</div></div>
+    </div>
+
+    <div class="toolbar">
+      <button class="tab active" data-filter="all" type="button">All</button>
+      <button class="tab" data-filter="signup" type="button">Signups</button>
+      <button class="tab" data-filter="notified" type="button">Notified</button>
+      <button class="secondary" id="refreshBtn" type="button" style="margin-left:auto;">Refresh</button>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Type</th><th>Phone</th><th>Product</th><th>Size</th><th>When</th></tr></thead>
+        <tbody id="eventsBody"></tbody>
+      </table>
+      <div class="empty" id="emptyState" hidden>No events yet.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  var keyInput = document.getElementById('adminKey');
+  var loadBtn = document.getElementById('loadBtn');
+  var refreshBtn = document.getElementById('refreshBtn');
+  var statusLine = document.getElementById('statusLine');
+  var content = document.getElementById('content');
+  var tbody = document.getElementById('eventsBody');
+  var emptyState = document.getElementById('emptyState');
+  var tabs = document.querySelectorAll('.tab');
+  var lastEvents = [];
+  var currentFilter = 'all';
+
+  try {
+    var savedKey = localStorage.getItem('nim_admin_key');
+    if (savedKey) keyInput.value = savedKey;
+  } catch (e) {}
+
+  function fmtDate(iso){ try { return new Date(iso).toLocaleString(); } catch(e){ return iso; } }
+
+  function render(){
+    var filtered = currentFilter === 'all' ? lastEvents : lastEvents.filter(function(e){ return e.type === currentFilter; });
+    tbody.innerHTML = '';
+    if (!filtered.length){ emptyState.hidden = false; }
+    else {
+      emptyState.hidden = true;
+      filtered.forEach(function(e){
+        var tr = document.createElement('tr');
+        var badgeClass = e.type === 'notified' ? 'notified' : 'signup';
+        var badgeLabel = e.type === 'notified' ? 'Notified' : 'Signup';
+        tr.innerHTML =
+          '<td><span class="badge ' + badgeClass + '">' + badgeLabel + '</span></td>' +
+          '<td>' + (e.phone || '') + '</td>' +
+          '<td>' + (e.productTitle || '') + '</td>' +
+          '<td>' + (e.variantTitle || e.variantId || '') + '</td>' +
+          '<td>' + fmtDate(e.ts) + '</td>';
+        tbody.appendChild(tr);
+      });
+    }
+  }
+
+  tabs.forEach(function(tab){
+    tab.addEventListener('click', function(){
+      tabs.forEach(function(t){ t.classList.remove('active'); });
+      tab.classList.add('active');
+      currentFilter = tab.getAttribute('data-filter');
+      render();
+    });
+  });
+
+  async function load(){
+    var key = (keyInput.value || '').trim();
+    if (!key){ statusLine.className = 'status-line error'; statusLine.textContent = 'Enter the admin key.'; return; }
+    try { localStorage.setItem('nim_admin_key', key); } catch(e){}
+    loadBtn.disabled = true; refreshBtn.disabled = true;
+    statusLine.className = 'status-line';
+    statusLine.textContent = 'Loading...';
+    try {
+      var resp = await fetch('/admin/stats?key=' + encodeURIComponent(key));
+      if (resp.status === 401){
+        statusLine.className = 'status-line error';
+        statusLine.textContent = 'Unauthorized - check the admin key.';
+        loadBtn.disabled = false; refreshBtn.disabled = false;
+        return;
+      }
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      var data = await resp.json();
+      lastEvents = data.events || [];
+      document.getElementById('statSignups').textContent = data.totalSignups != null ? data.totalSignups : '-';
+      document.getElementById('statNotified').textContent = data.totalNotified != null ? data.totalNotified : '-';
+      document.getElementById('statWaiting').textContent = data.currentlyWaiting != null ? data.currentlyWaiting : '-';
+      content.hidden = false;
+      statusLine.textContent = 'Last updated ' + new Date().toLocaleTimeString();
+      render();
+    } catch (err) {
+      statusLine.className = 'status-line error';
+      statusLine.textContent = 'Could not load stats (' + err.message + '). Wait a few seconds and click Refresh.';
+    } finally {
+      loadBtn.disabled = false; refreshBtn.disabled = false;
+    }
+  }
+
+  loadBtn.addEventListener('click', load);
+  refreshBtn.addEventListener('click', load);
+  try { if (localStorage.getItem('nim_admin_key')) load(); } catch(e){}
+})();
+</script>
+</body>
+</html>`;
+
+app.get('/dashboard', (req, res) => {
+res.type('html').send(DASHBOARD_HTML);
+});
+
 app.listen(process.env.PORT || 3000, () => console.log('Server running!'));
