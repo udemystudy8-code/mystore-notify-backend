@@ -396,7 +396,8 @@ const DASHBOARD_HTML = `<!doctype html>
       <button class="tab active" data-filter="all" type="button">All</button>
       <button class="tab" data-filter="signup" type="button">Signups</button>
       <button class="tab" data-filter="notified" type="button">Notified</button>
-      <button class="secondary" id="refreshBtn" type="button" style="margin-left:auto;">Refresh</button>
+      <button class="secondary" id="exportBtn" type="button" style="margin-left:auto;">Export CSV</button>
+      <button class="secondary" id="refreshBtn" type="button">Refresh</button>
     </div>
 
     <div class="table-wrap">
@@ -414,6 +415,7 @@ const DASHBOARD_HTML = `<!doctype html>
   var keyInput = document.getElementById('adminKey');
   var loadBtn = document.getElementById('loadBtn');
   var refreshBtn = document.getElementById('refreshBtn');
+  var exportBtn = document.getElementById('exportBtn');
   var statusLine = document.getElementById('statusLine');
   var content = document.getElementById('content');
   var tbody = document.getElementById('eventsBody');
@@ -458,6 +460,45 @@ const DASHBOARD_HTML = `<!doctype html>
       render();
     });
   });
+
+  function csvField(val){
+    var s = (val === null || val === undefined) ? '' : String(val);
+    if (/[",\n]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"';
+    return s;
+  }
+
+  function exportCSV(){
+    var filtered = currentFilter === 'all' ? lastEvents : lastEvents.filter(function(e){ return e.type === currentFilter; });
+    if (!filtered.length){
+      statusLine.className = 'status-line error';
+      statusLine.textContent = 'Nothing to export for this filter.';
+      return;
+    }
+    var header = ['Type', 'Phone', 'Product', 'Size', 'When'];
+    var rows = filtered.map(function(e){
+      var badgeLabel = e.type === 'notified' ? 'Notified' : 'Signup';
+      return [
+        badgeLabel,
+        e.phone || '',
+        e.productTitle || '',
+        e.variantTitle || e.variantId || '',
+        fmtDate(e.ts)
+      ].map(csvField).join(',');
+    });
+    var csv = header.map(csvField).join(',') + '\\n' + rows.join('\\n');
+    var blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    var stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    a.href = url;
+    a.download = 'notify-me-' + currentFilter + '-' + stamp + '.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
+  }
+
+  exportBtn.addEventListener('click', exportCSV);
 
   async function load(){
     var key = (keyInput.value || '').trim();
