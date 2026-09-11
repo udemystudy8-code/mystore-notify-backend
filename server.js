@@ -481,7 +481,7 @@ tabs.forEach(function(tab){
 
 function csvField(val){
   var s = (val === null || val === undefined) ? '' : String(val);
-  if (/[",\n]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"';
+  if (/[",\\n]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"';
   return s;
 }
 
@@ -503,7 +503,7 @@ function exportCSV(){
       fmtDate(e.ts)
     ].map(csvField).join(',');
   });
-  var csv = header.map(csvField).join(',') + '\n' + rows.join('\n');
+  var csv = header.map(csvField).join(',') + '\\n' + rows.join('\\n');
   var blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
   var url = URL.createObjectURL(blob);
   var a = document.createElement('a');
