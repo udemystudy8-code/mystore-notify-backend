@@ -527,7 +527,11 @@ body{background:var(--bg); color:var(--text); margin:0; font-family:'Inter',-app
 .greeting{font-size:1.25rem; font-weight:800;}
 .greeting-sub{font-size:0.85rem; color:var(--muted); margin-top:2px;}
 .auth-row{display:flex; gap:8px; align-items:center; flex-wrap:wrap;}
-.auth-row input[type="password"]{padding:10px 14px; border-radius:999px; border:1px solid var(--border); background:var(--card); color:var(--text); font-size:0.85rem; width:180px; font-family:inherit;}
+.key-field{position:relative; display:flex; align-items:center;}
+.key-field input{padding:10px 38px 10px 14px; border-radius:999px; border:1px solid var(--border); background:var(--card); color:var(--text); font-size:0.85rem; width:180px; font-family:inherit;}
+.key-toggle{position:absolute; right:4px; top:50%; transform:translateY(-50%); width:28px; height:28px; padding:0; border:none; background:transparent; color:var(--muted); display:flex; align-items:center; justify-content:center; cursor:pointer;}
+.key-toggle svg{width:16px; height:16px; margin:0;}
+.key-toggle:hover{color:var(--maroon-text);}
 .status-line{padding:0 28px 16px; font-size:0.8rem; color:var(--muted);}
 .status-line.error{color:var(--red);}
 
@@ -585,7 +589,7 @@ tr:last-child td{border-bottom:none;}
   .topbar{padding:18px 16px 10px;}
   .content-area{padding:4px 16px 20px;}
   .status-line{padding:0 16px 12px;}
-  .auth-row input[type="password"]{width:140px;}
+  .key-field input{width:140px;}
 }
 </style>
 </head>
@@ -612,7 +616,12 @@ tr:last-child td{border-bottom:none;}
         <div class="greeting-sub">Evara · Notify Me &amp; Store Overview</div>
       </div>
       <div class="auth-row">
-        <input type="password" id="adminKey" placeholder="Admin key">
+        <div class="key-field">
+          <input type="password" id="adminKey" placeholder="Admin key">
+          <button class="key-toggle" id="toggleKeyBtn" type="button" title="Show admin key" aria-label="Show admin key">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+        </div>
         <button id="loadBtn" type="button">Unlock</button>
       </div>
     </header>
@@ -740,6 +749,17 @@ tr:last-child td{border-bottom:none;}
     var savedKey = localStorage.getItem('nim_admin_key');
     if (savedKey) keyInput.value = savedKey;
   } catch (e) {}
+
+  var toggleKeyBtn = document.getElementById('toggleKeyBtn');
+  var eyeIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>';
+  var eyeOffIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M10.6 5.2A10.6 10.6 0 0 1 12 5c6.5 0 10 7 10 7a17.9 17.9 0 0 1-3.2 4.2M6.6 6.6C3.9 8.3 2 12 2 12s3.5 7 10 7c1.4 0 2.7-.3 3.9-.8"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>';
+  toggleKeyBtn.addEventListener('click', function(){
+    var showing = keyInput.type === 'text';
+    keyInput.type = showing ? 'password' : 'text';
+    toggleKeyBtn.innerHTML = showing ? eyeIcon : eyeOffIcon;
+    toggleKeyBtn.title = showing ? 'Show admin key' : 'Hide admin key';
+    toggleKeyBtn.setAttribute('aria-label', toggleKeyBtn.title);
+  });
 
   function fmtDate(iso){ try { return new Date(iso).toLocaleString(); } catch(e){ return iso; } }
   function fmtDateOnly(iso){ try { return new Date(iso).toLocaleDateString(); } catch(e){ return iso; } }
