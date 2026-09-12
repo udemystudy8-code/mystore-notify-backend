@@ -334,16 +334,30 @@ app.get('/admin/stats', (req, res) => {
 
 // ---------------------------------------------------------------------------
 // SHOPIFY STORE STATS (new — read-only, does not touch subscribers,
-// messaging, or the events log above). Reuses the same SHOPIFY_STORE_DOMAIN
-// and SHOPIFY_ADMIN_TOKEN env vars already used for event persistence, so no
-// new secret has to be created — the existing custom app just needs two
-// extra READ-ONLY scopes added in Shopify Admin -> Settings -> Apps and
-// sales channels -> Develop apps -> (your app) -> Configuration:
-//   read_orders, read_customers
+// messaging, or the events log above). Uses its OWN isolated Admin API
+// token — SHOPIFY_STATS_TOKEN — from a separate, read-only app
+// ("Evara Order Stats", scopes: read_orders, read_customers) so the
+// existing SHOPIFY_ADMIN_TOKEN (used above for write_metaobjects event
+// persistence) never has to be touched or have its scopes changed.
+// Falls back to SHOPIFY_ADMIN_TOKEN only if SHOPIFY_STATS_TOKEN isn't set,
+// so this still works standalone if that's the only token available.
 // Nothing in this section can create, edit, cancel, or refund anything in
 // the store. If either scope is missing, the affected number degrades to
 // "n/a" instead of failing the whole endpoint.
 // ---------------------------------------------------------------------------
+async function shopifyStatsGraphQL(query, variables) {
+  const token = process.env.SHOPIFY_STATS_TOKEN || process.env.SHOPIFY_ADMIN_TOKEN;
+  const resp = await fetch(`https://${process.env.SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`, {
+    method: 'POST',
+    headers: {
+      'X-Shopify-Access-Token': token,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ query, variables })
+  });
+  return resp.json();
+}
+
 async function fetchShopifyOrderStats() {
   const query = `
     query DashboardOrders($first: Int!) {
@@ -364,7 +378,7 @@ async function fetchShopifyOrderStats() {
       }
     }
   `;
-  const data = await shopifyGraphQL(query, { first: 100 });
+  const data = await shopifyStatsGraphQL(query, { first: 100 });
   if (data.errors) {
     throw new Error(data.errors.map(e => e.message).join('; '));
   }
@@ -374,7 +388,7 @@ async function fetchShopifyOrderStats() {
 
 async function fetchShopifyCustomerCount() {
   const query = `query CustomerCount { customersCount { count } }`;
-  const data = await shopifyGraphQL(query, {});
+  const data = await shopifyStatsGraphQL(query, {});
   if (data.errors) {
     throw new Error(data.errors.map(e => e.message).join('; '));
   }
@@ -393,8 +407,8 @@ app.get('/admin/shopify-stats', async (req, res) => {
   if (!process.env.ADMIN_KEY || req.query.key !== process.env.ADMIN_KEY) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
-  if (!process.env.SHOPIFY_STORE_DOMAIN || !process.env.SHOPIFY_ADMIN_TOKEN) {
-    return res.status(503).json({ error: 'Shopify env vars not set (SHOPIFY_STORE_DOMAIN / SHOPIFY_ADMIN_TOKEN).' });
+  if (!process.env.SHOPIFY_STORE_DOMAIN || !(process.env.SHOPIFY_STATS_TOKEN || process.env.SHOPIFY_ADMIN_TOKEN)) {
+    return res.status(503).json({ error: 'Shopify env vars not set (SHOPIFY_STORE_DOMAIN / SHOPIFY_STATS_TOKEN).' });
   }
   try {
     const [orders, totalCustomers] = await Promise.all([
