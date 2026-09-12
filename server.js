@@ -479,141 +479,238 @@ app.get('/admin/shopify-stats', async (req, res) => {
 
 // Dashboard page itself — served from this same domain (not claude.ai) so its
 // fetch() calls to /admin/stats are same-origin and never get blocked as
-// cross-site. Static HTML/CSS/JS only, no external calls besides this API.
+// cross-site. Static HTML/CSS/JS only, no external calls besides this API
+// (and Google Fonts for the Inter typeface used in the Evara-styled UI
+// below). This section is purely presentational — it does not read from or
+// write to subscribers/messaging state; all data still comes from the same
+// /admin/stats and /admin/shopify-stats endpoints above, unchanged.
 const DASHBOARD_HTML = `<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Notify Me Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
 :root{
-  --bg:#f6f7f5; --card:#ffffff; --border:#e3e5e0; --text:#1c1f1a; --muted:#6b7268;
-  --accent:#1f8a4c; --accent-soft:#e6f4ec; --waiting:#b8860b; --waiting-soft:#fbf1dc;
-  --danger:#b3261e; --input-bg:#ffffff;
+  --maroon:#4D1010; --maroon-soft:#F5E6E6; --maroon-text:#4D1010;
+  --bg:#FAF6F5; --card:#ffffff; --border:#EDE1E1; --text:#211313; --muted:#8C7676;
+  --green:#1F8A4C; --green-soft:#E6F4EC;
+  --amber:#A9760A; --amber-soft:#FBF1DC;
+  --red:#B3261E; --red-soft:#FBE7E5;
 }
 @media (prefers-color-scheme: dark){
   :root{
-    --bg:#151713; --card:#1e211c; --border:#2c2f28; --text:#eef0ea; --muted:#9aa196;
-    --accent:#3fbd74; --accent-soft:#173824; --waiting:#e0b13a; --waiting-soft:#332608;
-    --danger:#ff6b62; --input-bg:#262a22;
+    --bg:#150e0e; --card:#211515; --border:#3a2424; --text:#f3e8e8; --muted:#b39a9a;
+    --maroon-soft:#3a1c1c; --maroon-text:#e59a9a;
+    --green-soft:#173824; --amber-soft:#332608; --red-soft:#3a1414;
   }
 }
 *{box-sizing:border-box;}
-body{background:var(--bg); color:var(--text); margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; padding:20px 16px 48px;}
-.wrap{max-width:920px; margin:0 auto;}
-h1{font-size:1.35rem; margin:0 0 4px;}
-.sub{color:var(--muted); font-size:0.88rem; margin:0 0 20px;}
-.setup{background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px; margin-bottom:20px;}
-.setup label{display:block; font-size:0.78rem; color:var(--muted); margin-bottom:4px;}
-.setup-row{display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;}
-.field{flex:1; min-width:180px;}
-input[type="password"]{width:100%; padding:9px 10px; border-radius:8px; border:1px solid var(--border); background:var(--input-bg); color:var(--text); font-size:0.9rem;}
-button{padding:9px 16px; border-radius:8px; border:1px solid var(--accent); background:var(--accent); color:#fff; font-size:0.9rem; cursor:pointer; font-weight:600;}
-button.secondary{background:transparent; color:var(--text); border-color:var(--border); font-weight:500;}
-button:disabled{opacity:0.55; cursor:default;}
-.status-line{font-size:0.82rem; color:var(--muted); margin-top:10px;}
-.status-line.error{color:var(--danger);}
-.cards{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-bottom:20px;}
-.card{background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px;}
-.card .n{font-size:1.7rem; font-weight:700; line-height:1.1;}
-.card .l{font-size:0.8rem; color:var(--muted); margin-top:4px;}
-.toolbar{display:flex; gap:8px; align-items:center; margin-bottom:12px; flex-wrap:wrap;}
-.tab{padding:6px 12px; border-radius:999px; border:1px solid var(--border); background:transparent; color:var(--text); font-size:0.82rem; cursor:pointer; font-weight:500;}
-.tab.active{background:var(--accent-soft); border-color:var(--accent); color:var(--accent);}
-.table-wrap{background:var(--card); border:1px solid var(--border); border-radius:12px; overflow:auto; max-width:100%;}
-table{border-collapse:collapse; width:100%; font-size:0.85rem; min-width:560px;}
-th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--border); white-space:nowrap;}
-th{color:var(--muted); font-weight:600; font-size:0.75rem; text-transform:uppercase; letter-spacing:0.03em;}
-tr:last-child td{border-bottom:none;}
-.badge{display:inline-block; padding:2px 9px; border-radius:999px; font-size:0.72rem; font-weight:600;}
-.badge.signup{background:var(--waiting-soft); color:var(--waiting);}
-.badge.notified{background:var(--accent-soft); color:var(--accent);}
-.badge.paid{background:var(--accent-soft); color:var(--accent);}
-.badge.pending{background:var(--waiting-soft); color:var(--waiting);}
-.badge.cancelled{background:var(--danger-soft,var(--waiting-soft)); color:var(--danger);}
-.empty{padding:32px 16px; text-align:center; color:var(--muted); font-size:0.88rem;}
-.section-title{font-size:1.05rem; font-weight:700; margin:32px 0 4px;}
+html{scroll-behavior:smooth;}
+body{background:var(--bg); color:var(--text); margin:0; font-family:'Inter',-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+.app{display:flex; min-height:100vh;}
+
+.sidebar{position:fixed; top:0; left:0; bottom:0; width:72px; background:var(--maroon); display:flex; flex-direction:column; align-items:center; padding:18px 0; z-index:5;}
+.brand{width:36px; height:36px; border-radius:10px; background:rgba(255,255,255,0.16); color:#fff; font-weight:800; font-size:1rem; display:flex; align-items:center; justify-content:center; margin-bottom:26px; letter-spacing:0.02em;}
+.side-nav{display:flex; flex-direction:column; gap:6px;}
+.side-link{width:40px; height:40px; border-radius:10px; display:flex; align-items:center; justify-content:center; color:rgba(255,255,255,0.6); text-decoration:none; transition:background .15s, color .15s;}
+.side-link svg{width:19px; height:19px;}
+.side-link:hover{background:rgba(255,255,255,0.12); color:#fff;}
+.side-link.active{background:rgba(255,255,255,0.2); color:#fff;}
+.side-bottom{margin-top:auto;}
+
+.main{margin-left:72px; flex:1; min-width:0; padding-bottom:48px;}
+.topbar{display:flex; align-items:center; justify-content:space-between; gap:16px; padding:24px 28px 14px; flex-wrap:wrap;}
+.greeting{font-size:1.25rem; font-weight:800;}
+.greeting-sub{font-size:0.85rem; color:var(--muted); margin-top:2px;}
+.auth-row{display:flex; gap:8px; align-items:center; flex-wrap:wrap;}
+.auth-row input[type="password"]{padding:10px 14px; border-radius:999px; border:1px solid var(--border); background:var(--card); color:var(--text); font-size:0.85rem; width:180px; font-family:inherit;}
+.status-line{padding:0 28px 16px; font-size:0.8rem; color:var(--muted);}
+.status-line.error{color:var(--red);}
+
+.content-area{padding:6px 28px 20px;}
+.section-title{font-size:1.08rem; font-weight:800; margin:26px 0 3px;}
 .section-sub{color:var(--muted); font-size:0.85rem; margin:0 0 16px;}
+
+.cards{display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:14px; margin-bottom:18px;}
+.card{background:var(--card); border:1px solid var(--border); border-radius:14px; padding:16px; box-shadow:0 1px 2px rgba(77,16,16,0.04);}
+.icon-chip{width:34px; height:34px; border-radius:9px; display:flex; align-items:center; justify-content:center; margin-bottom:10px;}
+.icon-chip svg{width:17px; height:17px;}
+.icon-chip.maroon{background:var(--maroon-soft); color:var(--maroon-text);}
+.icon-chip.green{background:var(--green-soft); color:var(--green);}
+.icon-chip.amber{background:var(--amber-soft); color:var(--amber);}
+.icon-chip.red{background:var(--red-soft); color:var(--red);}
+.card .n{font-size:1.55rem; font-weight:800; line-height:1.1;}
+.card .l{font-size:0.78rem; color:var(--muted); margin-top:4px;}
+
+.toolbar{display:flex; gap:8px; align-items:center; margin-bottom:12px; flex-wrap:wrap;}
+.toolbar-title{font-size:0.85rem; color:var(--muted); font-weight:700;}
+.tab{padding:7px 14px; border-radius:999px; border:1px solid var(--border); background:transparent; color:var(--text); font-size:0.82rem; cursor:pointer; font-weight:600; font-family:inherit;}
+.tab.active{background:var(--maroon-soft); border-color:var(--maroon); color:var(--maroon-text);}
+button{padding:9px 16px; border-radius:999px; border:1px solid var(--maroon); background:var(--maroon); color:#fff; font-size:0.85rem; cursor:pointer; font-weight:700; font-family:inherit; display:inline-flex; align-items:center;}
+button svg{width:14px; height:14px; margin-right:5px;}
+button.secondary{background:transparent; color:var(--text); border-color:var(--border); font-weight:600;}
+button:disabled{opacity:0.5; cursor:default;}
+
+.table-wrap{background:var(--card); border:1px solid var(--border); border-radius:14px; overflow:auto; max-width:100%;}
+table{border-collapse:collapse; width:100%; font-size:0.85rem; min-width:520px;}
+th,td{text-align:left; padding:11px 14px; border-bottom:1px solid var(--border); white-space:nowrap;}
+th{color:var(--muted); font-weight:700; font-size:0.72rem; text-transform:uppercase; letter-spacing:0.04em;}
+tr:last-child td{border-bottom:none;}
+.badge{display:inline-block; padding:3px 10px; border-radius:999px; font-size:0.72rem; font-weight:700;}
+.badge.signup{background:var(--amber-soft); color:var(--amber);}
+.badge.notified{background:var(--green-soft); color:var(--green);}
+.badge.paid{background:var(--green-soft); color:var(--green);}
+.badge.pending{background:var(--amber-soft); color:var(--amber);}
+.badge.cancelled{background:var(--red-soft); color:var(--red);}
+.empty{padding:32px 16px; text-align:center; color:var(--muted); font-size:0.88rem;}
+
+.split{display:grid; grid-template-columns:1.6fr 1fr; gap:16px; align-items:start; margin-bottom:28px;}
+.panel{background:var(--card); border:1px solid var(--border); border-radius:14px; padding:16px;}
+.panel-title{font-size:0.85rem; color:var(--muted); font-weight:700; margin-bottom:14px;}
+.bar-list{display:flex; flex-direction:column; gap:14px;}
+.bar-item-top{display:flex; justify-content:space-between; font-size:0.82rem; margin-bottom:5px; gap:8px;}
+.bar-item-name{font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.bar-item-val{color:var(--muted); white-space:nowrap;}
+.bar-track{height:6px; border-radius:999px; background:var(--maroon-soft); overflow:hidden;}
+.bar-fill{height:100%; border-radius:999px;}
+
+@media (max-width:900px){ .split{grid-template-columns:1fr;} }
+@media (max-width:640px){
+  .sidebar{width:56px;}
+  .main{margin-left:56px;}
+  .topbar{padding:18px 16px 10px;}
+  .content-area{padding:4px 16px 20px;}
+  .status-line{padding:0 16px 12px;}
+  .auth-row input[type="password"]{width:140px;}
+}
 </style>
 </head>
 <body>
-<div class="wrap">
-<h1>Notify Me Dashboard</h1>
-<p class="sub">Every WhatsApp restock-alert signup on your store, logged and counted.</p>
+<div class="app">
 
-<div class="setup">
-  <div class="setup-row">
-    <div class="field">
-      <label for="adminKey">Admin key</label>
-      <input type="password" id="adminKey" placeholder="ADMIN_KEY value">
+  <aside class="sidebar">
+    <div class="brand">E</div>
+    <nav class="side-nav">
+      <a href="#top" class="side-link active" title="Overview"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11.5 12 4l9 7.5"/><path d="M5 10v9a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1v-9"/></svg></a>
+      <a href="#notifySection" class="side-link" title="Notify Me"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.5 21a1.5 1.5 0 0 0 3 0"/></svg></a>
+      <a href="#storeSection" class="side-link" title="Store Overview"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10"/><path d="M12 20V4"/><path d="M20 20v-7"/></svg></a>
+      <a href="#storeSection" class="side-link" title="Customers"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><circle cx="17" cy="9" r="2.6"/><path d="M15.5 14.2c2.5.4 4.5 2.6 4.5 5.3"/></svg></a>
+    </nav>
+    <div class="side-bottom">
+      <a href="#" class="side-link" title="Settings" onclick="return false;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg></a>
     </div>
-    <button id="loadBtn" type="button">Load</button>
-  </div>
-  <div class="status-line" id="statusLine">Enter your admin key and click Load. (This service can take up to a minute to wake up if it has been idle.)</div>
-</div>
+  </aside>
 
-<div id="content" hidden>
-  <div class="cards">
-    <div class="card"><div class="n" id="statSignups">-</div><div class="l">Total notify-me signups</div></div>
-    <div class="card"><div class="n" id="statNotified">-</div><div class="l">Restock alerts sent</div></div>
-    <div class="card"><div class="n" id="statWaiting">-</div><div class="l">Currently waiting</div></div>
-  </div>
+  <div class="main" id="top">
+    <header class="topbar">
+      <div>
+        <div class="greeting">Hi — welcome back</div>
+        <div class="greeting-sub">Evara · Notify Me &amp; Store Overview</div>
+      </div>
+      <div class="auth-row">
+        <input type="password" id="adminKey" placeholder="Admin key">
+        <button id="loadBtn" type="button">Unlock</button>
+      </div>
+    </header>
+    <div class="status-line" id="statusLine">Enter your admin key and click Unlock. (This service can take up to a minute to wake up if it has been idle.)</div>
 
-  <div class="toolbar">
-    <button class="tab active" data-filter="all" type="button">All</button>
-    <button class="tab" data-filter="signup" type="button">Signups</button>
-    <button class="tab" data-filter="notified" type="button">Notified</button>
-    <button class="secondary" id="exportBtn" type="button" style="margin-left:auto;">Export CSV</button>
-    <button class="secondary" id="refreshBtn" type="button">Refresh</button>
-  </div>
+    <div class="content-area">
 
-  <div class="table-wrap">
-    <table>
-      <thead><tr><th>Type</th><th>Phone</th><th>Product</th><th>Size</th><th>When</th></tr></thead>
-      <tbody id="eventsBody"></tbody>
-    </table>
-    <div class="empty" id="emptyState" hidden>No events yet.</div>
-  </div>
-</div>
+      <section id="notifySection">
+        <div class="section-title">Notify Me</div>
+        <p class="section-sub">Every WhatsApp restock-alert signup on your store, logged and counted.</p>
 
-<div id="shopifySection" hidden>
-  <div class="section-title">Store Overview</div>
-  <p class="section-sub">Live order data pulled from Shopify. Uses the same admin key above.</p>
+        <div id="content" hidden>
+          <div class="cards">
+            <div class="card">
+              <div class="icon-chip maroon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.5 21a1.5 1.5 0 0 0 3 0"/></svg></div>
+              <div class="n" id="statSignups">-</div><div class="l">Total notify-me signups</div>
+            </div>
+            <div class="card">
+              <div class="icon-chip green"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m8.5 12.5 2.3 2.3L16 9.6"/></svg></div>
+              <div class="n" id="statNotified">-</div><div class="l">Restock alerts sent</div>
+            </div>
+            <div class="card">
+              <div class="icon-chip amber"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.2 2"/></svg></div>
+              <div class="n" id="statWaiting">-</div><div class="l">Currently waiting</div>
+            </div>
+          </div>
 
-  <div class="cards">
-    <div class="card"><div class="n" id="shopOrdersCompleted">-</div><div class="l">Orders Completed</div></div>
-    <div class="card"><div class="n" id="shopOrdersPending">-</div><div class="l">Orders Pending</div></div>
-    <div class="card"><div class="n" id="shopOrdersCancelled">-</div><div class="l">Orders Cancelled</div></div>
-    <div class="card"><div class="n" id="shopCustomers">-</div><div class="l">Total Customers</div></div>
-  </div>
+          <div class="toolbar">
+            <button class="tab active" data-filter="all" type="button">All</button>
+            <button class="tab" data-filter="signup" type="button">Signups</button>
+            <button class="tab" data-filter="notified" type="button">Notified</button>
+            <button class="secondary" id="exportBtn" type="button" style="margin-left:auto;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>Export CSV</button>
+            <button class="secondary" id="refreshBtn" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15.4-6.4L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.4 6.4L3 16"/><path d="M3 21v-5h5"/></svg>Refresh</button>
+          </div>
 
-  <div class="toolbar">
-    <div style="font-size:0.85rem; color:var(--muted); font-weight:600;">Recent orders</div>
-    <button class="secondary" id="shopExportBtn" type="button" style="margin-left:auto;">Export CSV</button>
-    <button class="secondary" id="shopRefreshBtn" type="button">Refresh</button>
-  </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Type</th><th>Phone</th><th>Product</th><th>Size</th><th>When</th></tr></thead>
+              <tbody id="eventsBody"></tbody>
+            </table>
+            <div class="empty" id="emptyState" hidden>No events yet.</div>
+          </div>
+        </div>
+      </section>
 
-  <div class="table-wrap" style="margin-bottom:24px;">
-    <table>
-      <thead><tr><th>Product</th><th>Size</th><th>Qty</th><th>Status</th><th>Date</th><th>Time</th></tr></thead>
-      <tbody id="shopOrdersBody"></tbody>
-    </table>
-    <div class="empty" id="shopOrdersEmpty" hidden>No orders yet.</div>
-  </div>
+      <section id="storeSection">
+        <div id="shopifySection" hidden>
+          <div class="section-title">Store Overview</div>
+          <p class="section-sub">Live order data pulled from Shopify. Uses the same admin key above.</p>
 
-  <div class="toolbar">
-    <div style="font-size:0.85rem; color:var(--muted); font-weight:600;">Best-selling products</div>
-  </div>
-  <div class="table-wrap">
-    <table>
-      <thead><tr><th>Product</th><th>Units sold</th><th>Share</th></tr></thead>
-      <tbody id="shopBestSellersBody"></tbody>
-    </table>
-    <div class="empty" id="shopBestSellersEmpty" hidden>Not enough order data yet.</div>
-  </div>
-</div>
+          <div class="cards">
+            <div class="card">
+              <div class="icon-chip green"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m8.5 12.5 2.3 2.3L16 9.6"/></svg></div>
+              <div class="n" id="shopOrdersCompleted">-</div><div class="l">Orders Completed</div>
+            </div>
+            <div class="card">
+              <div class="icon-chip amber"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.2 2"/></svg></div>
+              <div class="n" id="shopOrdersPending">-</div><div class="l">Orders Pending</div>
+            </div>
+            <div class="card">
+              <div class="icon-chip red"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m9 9 6 6M15 9l-6 6"/></svg></div>
+              <div class="n" id="shopOrdersCancelled">-</div><div class="l">Orders Cancelled</div>
+            </div>
+            <div class="card">
+              <div class="icon-chip maroon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><circle cx="17" cy="9" r="2.6"/><path d="M15.5 14.2c2.5.4 4.5 2.6 4.5 5.3"/></svg></div>
+              <div class="n" id="shopCustomers">-</div><div class="l">Total Customers</div>
+            </div>
+          </div>
 
+          <div class="split">
+            <div class="split-main">
+              <div class="toolbar">
+                <div class="toolbar-title">Recent orders</div>
+                <button class="secondary" id="shopExportBtn" type="button" style="margin-left:auto;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>Export CSV</button>
+                <button class="secondary" id="shopRefreshBtn" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15.4-6.4L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.4 6.4L3 16"/><path d="M3 21v-5h5"/></svg>Refresh</button>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead><tr><th>Product</th><th>Size</th><th>Qty</th><th>Status</th><th>Date</th><th>Time</th></tr></thead>
+                  <tbody id="shopOrdersBody"></tbody>
+                </table>
+                <div class="empty" id="shopOrdersEmpty" hidden>No orders yet.</div>
+              </div>
+            </div>
+
+            <aside class="split-side">
+              <div class="panel">
+                <div class="panel-title">Best-selling products</div>
+                <div id="shopBestSellersBody" class="bar-list"></div>
+                <div class="empty" id="shopBestSellersEmpty" hidden>Not enough order data yet.</div>
+              </div>
+            </aside>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </div>
 </div>
 
 <script>
@@ -741,13 +838,14 @@ tr:last-child td{border-bottom:none;}
     shopBestSellersBody.innerHTML = '';
     if (!list || !list.length){ shopBestSellersEmpty.hidden = false; return; }
     shopBestSellersEmpty.hidden = true;
-    list.forEach(function(b){
-      var tr = document.createElement('tr');
-      tr.innerHTML =
-        '<td>' + (b.product || '') + '</td>' +
-        '<td>' + b.units + '</td>' +
-        '<td>' + b.share + '%</td>';
-      shopBestSellersBody.appendChild(tr);
+    var colors = ['#4D1010', '#1F8A4C', '#A9760A', '#2B6CB0', '#7A4B94'];
+    list.forEach(function(b, i){
+      var row = document.createElement('div');
+      row.className = 'bar-item';
+      row.innerHTML =
+        '<div class="bar-item-top"><span class="bar-item-name">' + (b.product || '') + '</span><span class="bar-item-val">' + b.units + ' units</span></div>' +
+        '<div class="bar-track"><div class="bar-fill" style="width:' + b.share + '%; background:' + colors[i % colors.length] + '"></div></div>';
+      shopBestSellersBody.appendChild(row);
     });
   }
 
