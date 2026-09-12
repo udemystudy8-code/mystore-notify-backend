@@ -332,6 +332,137 @@ app.get('/admin/stats', (req, res) => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// SHOPIFY STORE STATS (new — read-only, does not touch subscribers,
+// messaging, or the events log above). Reuses the same SHOPIFY_STORE_DOMAIN
+// and SHOPIFY_ADMIN_TOKEN env vars already used for event persistence, so no
+// new secret has to be created — the existing custom app just needs two
+// extra READ-ONLY scopes added in Shopify Admin -> Settings -> Apps and
+// sales channels -> Develop apps -> (your app) -> Configuration:
+//   read_orders, read_customers
+// Nothing in this section can create, edit, cancel, or refund anything in
+// the store. If either scope is missing, the affected number degrades to
+// "n/a" instead of failing the whole endpoint.
+// ---------------------------------------------------------------------------
+async function fetchShopifyOrderStats() {
+  const query = `
+    query DashboardOrders($first: Int!) {
+      orders(first: $first, sortKey: CREATED_AT, reverse: true) {
+        edges {
+          node {
+            name
+            createdAt
+            cancelledAt
+            displayFinancialStatus
+            lineItems(first: 5) {
+              edges {
+                node { title quantity variantTitle }
+              }
+            }
+          }
+        }
+      }
+    }
+  `;
+  const data = await shopifyGraphQL(query, { first: 100 });
+  if (data.errors) {
+    throw new Error(data.errors.map(e => e.message).join('; '));
+  }
+  const edges = (data.data && data.data.orders && data.data.orders.edges) || [];
+  return edges.map(e => e.node);
+}
+
+async function fetchShopifyCustomerCount() {
+  const query = `query CustomerCount { customersCount { count } }`;
+  const data = await shopifyGraphQL(query, {});
+  if (data.errors) {
+    throw new Error(data.errors.map(e => e.message).join('; '));
+  }
+  return (data.data && data.data.customersCount && data.data.customersCount.count) || 0;
+}
+
+function statusFromOrder(order) {
+  if (order.cancelledAt) return 'Cancelled';
+  const s = (order.displayFinancialStatus || '').toUpperCase();
+  if (s === 'PAID' || s === 'PARTIALLY_REFUNDED' || s === 'REFUNDED') return 'Paid';
+  return 'Pending';
+}
+
+// Protected the same way as /admin/stats (shared ADMIN_KEY). Read-only.
+app.get('/admin/shopify-stats', async (req, res) => {
+  if (!process.env.ADMIN_KEY || req.query.key !== process.env.ADMIN_KEY) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  if (!process.env.SHOPIFY_STORE_DOMAIN || !process.env.SHOPIFY_ADMIN_TOKEN) {
+    return res.status(503).json({ error: 'Shopify env vars not set (SHOPIFY_STORE_DOMAIN / SHOPIFY_ADMIN_TOKEN).' });
+  }
+  try {
+    const [orders, totalCustomers] = await Promise.all([
+      fetchShopifyOrderStats(),
+      fetchShopifyCustomerCount().catch(err => {
+        console.error('fetchShopifyCustomerCount failed (likely missing read_customers scope):', err.message);
+        return null;
+      })
+    ]);
+
+    let ordersCompleted = 0, ordersPending = 0, ordersCancelled = 0;
+    const unitsByProduct = {};
+    const recentOrders = [];
+
+    for (const order of orders) {
+      const status = statusFromOrder(order);
+      if (status === 'Paid') ordersCompleted++;
+      else if (status === 'Cancelled') ordersCancelled++;
+      else ordersPending++;
+
+      const lineItems = ((order.lineItems && order.lineItems.edges) || []).map(e => e.node);
+      const qty = lineItems.reduce((sum, li) => sum + (li.quantity || 0), 0);
+      const firstItem = lineItems[0] || {};
+      const productLabel = lineItems.length > 1
+        ? firstItem.title + ' +' + (lineItems.length - 1) + ' more'
+        : (firstItem.title || order.name);
+
+      if (recentOrders.length < 15) {
+        recentOrders.push({
+          product: productLabel,
+          size: firstItem.variantTitle || '',
+          qty,
+          status,
+          createdAt: order.createdAt
+        });
+      }
+
+      for (const li of lineItems) {
+        if (!li.title) continue;
+        unitsByProduct[li.title] = (unitsByProduct[li.title] || 0) + (li.quantity || 0);
+      }
+    }
+
+    const totalUnits = Object.values(unitsByProduct).reduce((a, b) => a + b, 0);
+    const bestSellers = Object.entries(unitsByProduct)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([product, units]) => ({
+        product,
+        units,
+        share: totalUnits ? Math.round((units / totalUnits) * 100) : 0
+      }));
+
+    res.json({
+      ordersCompleted,
+      ordersPending,
+      ordersCancelled,
+      totalCustomers: totalCustomers != null ? totalCustomers : 'n/a (add read_customers scope)',
+      recentOrders,
+      bestSellers,
+      basedOnOrders: orders.length
+    });
+  } catch (err) {
+    console.error('shopify-stats failed:', err.message);
+    res.status(502).json({ error: 'Shopify API error: ' + err.message + ' — check that the app has read_orders scope.' });
+  }
+});
+
 // Dashboard page itself — served from this same domain (not claude.ai) so its
 // fetch() calls to /admin/stats are same-origin and never get blocked as
 // cross-site. Static HTML/CSS/JS only, no external calls besides this API.
@@ -384,7 +515,12 @@ tr:last-child td{border-bottom:none;}
 .badge{display:inline-block; padding:2px 9px; border-radius:999px; font-size:0.72rem; font-weight:600;}
 .badge.signup{background:var(--waiting-soft); color:var(--waiting);}
 .badge.notified{background:var(--accent-soft); color:var(--accent);}
+.badge.paid{background:var(--accent-soft); color:var(--accent);}
+.badge.pending{background:var(--waiting-soft); color:var(--waiting);}
+.badge.cancelled{background:var(--danger-soft,var(--waiting-soft)); color:var(--danger);}
 .empty{padding:32px 16px; text-align:center; color:var(--muted); font-size:0.88rem;}
+.section-title{font-size:1.05rem; font-weight:700; margin:32px 0 4px;}
+.section-sub{color:var(--muted); font-size:0.85rem; margin:0 0 16px;}
 </style>
 </head>
 <body>
@@ -393,166 +529,287 @@ tr:last-child td{border-bottom:none;}
 <p class="sub">Every WhatsApp restock-alert signup on your store, logged and counted.</p>
 
 <div class="setup">
-<div class="setup-row">
-<div class="field">
-<label for="adminKey">Admin key</label>
-<input type="password" id="adminKey" placeholder="ADMIN_KEY value">
-</div>
-<button id="loadBtn" type="button">Load</button>
-</div>
-<div class="status-line" id="statusLine">Enter your admin key and click Load. (This service can take up to a minute to wake up if it has been idle.)</div>
+  <div class="setup-row">
+    <div class="field">
+      <label for="adminKey">Admin key</label>
+      <input type="password" id="adminKey" placeholder="ADMIN_KEY value">
+    </div>
+    <button id="loadBtn" type="button">Load</button>
+  </div>
+  <div class="status-line" id="statusLine">Enter your admin key and click Load. (This service can take up to a minute to wake up if it has been idle.)</div>
 </div>
 
 <div id="content" hidden>
-<div class="cards">
-<div class="card"><div class="n" id="statSignups">-</div><div class="l">Total notify-me signups</div></div>
-<div class="card"><div class="n" id="statNotified">-</div><div class="l">Restock alerts sent</div></div>
-<div class="card"><div class="n" id="statWaiting">-</div><div class="l">Currently waiting</div></div>
+  <div class="cards">
+    <div class="card"><div class="n" id="statSignups">-</div><div class="l">Total notify-me signups</div></div>
+    <div class="card"><div class="n" id="statNotified">-</div><div class="l">Restock alerts sent</div></div>
+    <div class="card"><div class="n" id="statWaiting">-</div><div class="l">Currently waiting</div></div>
+  </div>
+
+  <div class="toolbar">
+    <button class="tab active" data-filter="all" type="button">All</button>
+    <button class="tab" data-filter="signup" type="button">Signups</button>
+    <button class="tab" data-filter="notified" type="button">Notified</button>
+    <button class="secondary" id="exportBtn" type="button" style="margin-left:auto;">Export CSV</button>
+    <button class="secondary" id="refreshBtn" type="button">Refresh</button>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Type</th><th>Phone</th><th>Product</th><th>Size</th><th>When</th></tr></thead>
+      <tbody id="eventsBody"></tbody>
+    </table>
+    <div class="empty" id="emptyState" hidden>No events yet.</div>
+  </div>
 </div>
 
-<div class="toolbar">
-<button class="tab active" data-filter="all" type="button">All</button>
-<button class="tab" data-filter="signup" type="button">Signups</button>
-<button class="tab" data-filter="notified" type="button">Notified</button>
-<button class="secondary" id="exportBtn" type="button" style="margin-left:auto;">Export CSV</button>
-<button class="secondary" id="refreshBtn" type="button">Refresh</button>
+<div id="shopifySection" hidden>
+  <div class="section-title">Store Overview</div>
+  <p class="section-sub">Live order data pulled from Shopify. Uses the same admin key above.</p>
+
+  <div class="cards">
+    <div class="card"><div class="n" id="shopOrdersCompleted">-</div><div class="l">Orders Completed</div></div>
+    <div class="card"><div class="n" id="shopOrdersPending">-</div><div class="l">Orders Pending</div></div>
+    <div class="card"><div class="n" id="shopOrdersCancelled">-</div><div class="l">Orders Cancelled</div></div>
+    <div class="card"><div class="n" id="shopCustomers">-</div><div class="l">Total Customers</div></div>
+  </div>
+
+  <div class="toolbar">
+    <div style="font-size:0.85rem; color:var(--muted); font-weight:600;">Recent orders</div>
+    <button class="secondary" id="shopExportBtn" type="button" style="margin-left:auto;">Export CSV</button>
+    <button class="secondary" id="shopRefreshBtn" type="button">Refresh</button>
+  </div>
+
+  <div class="table-wrap" style="margin-bottom:24px;">
+    <table>
+      <thead><tr><th>Product</th><th>Size</th><th>Qty</th><th>Status</th><th>Date</th><th>Time</th></tr></thead>
+      <tbody id="shopOrdersBody"></tbody>
+    </table>
+    <div class="empty" id="shopOrdersEmpty" hidden>No orders yet.</div>
+  </div>
+
+  <div class="toolbar">
+    <div style="font-size:0.85rem; color:var(--muted); font-weight:600;">Best-selling products</div>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Product</th><th>Units sold</th><th>Share</th></tr></thead>
+      <tbody id="shopBestSellersBody"></tbody>
+    </table>
+    <div class="empty" id="shopBestSellersEmpty" hidden>Not enough order data yet.</div>
+  </div>
 </div>
 
-<div class="table-wrap">
-<table>
-<thead><tr><th>Type</th><th>Phone</th><th>Product</th><th>Size</th><th>When</th></tr></thead>
-<tbody id="eventsBody"></tbody>
-</table>
-<div class="empty" id="emptyState" hidden>No events yet.</div>
-</div>
-</div>
 </div>
 
 <script>
 (function(){
-var keyInput = document.getElementById('adminKey');
-var loadBtn = document.getElementById('loadBtn');
-var refreshBtn = document.getElementById('refreshBtn');
-var exportBtn = document.getElementById('exportBtn');
-var statusLine = document.getElementById('statusLine');
-var content = document.getElementById('content');
-var tbody = document.getElementById('eventsBody');
-var emptyState = document.getElementById('emptyState');
-var tabs = document.querySelectorAll('.tab');
-var lastEvents = [];
-var currentFilter = 'all';
+  var keyInput = document.getElementById('adminKey');
+  var loadBtn = document.getElementById('loadBtn');
+  var refreshBtn = document.getElementById('refreshBtn');
+  var exportBtn = document.getElementById('exportBtn');
+  var statusLine = document.getElementById('statusLine');
+  var content = document.getElementById('content');
+  var tbody = document.getElementById('eventsBody');
+  var emptyState = document.getElementById('emptyState');
+  var tabs = document.querySelectorAll('.tab');
+  var lastEvents = [];
+  var currentFilter = 'all';
 
-try {
-  var savedKey = localStorage.getItem('nim_admin_key');
-  if (savedKey) keyInput.value = savedKey;
-} catch (e) {}
+  var shopifySection = document.getElementById('shopifySection');
+  var shopRefreshBtn = document.getElementById('shopRefreshBtn');
+  var shopExportBtn = document.getElementById('shopExportBtn');
+  var shopOrdersBody = document.getElementById('shopOrdersBody');
+  var shopOrdersEmpty = document.getElementById('shopOrdersEmpty');
+  var shopBestSellersBody = document.getElementById('shopBestSellersBody');
+  var shopBestSellersEmpty = document.getElementById('shopBestSellersEmpty');
+  var lastShopOrders = [];
 
-function fmtDate(iso){ try { return new Date(iso).toLocaleString(); } catch(e){ return iso; } }
-
-function render(){
-  var filtered = currentFilter === 'all' ? lastEvents : lastEvents.filter(function(e){ return e.type === currentFilter; });
-  tbody.innerHTML = '';
-  if (!filtered.length){ emptyState.hidden = false; }
-  else {
-    emptyState.hidden = true;
-    filtered.forEach(function(e){
-      var tr = document.createElement('tr');
-      var badgeClass = e.type === 'notified' ? 'notified' : 'signup';
-      var badgeLabel = e.type === 'notified' ? 'Notified' : 'Signup';
-      tr.innerHTML =
-        '<td><span class="badge ' + badgeClass + '">' + badgeLabel + '</span></td>' +
-        '<td>' + (e.phone || '') + '</td>' +
-        '<td>' + (e.productTitle || '') + '</td>' +
-        '<td>' + (e.variantTitle || e.variantId || '') + '</td>' +
-        '<td>' + fmtDate(e.ts) + '</td>';
-      tbody.appendChild(tr);
-    });
-  }
-}
-
-tabs.forEach(function(tab){
-  tab.addEventListener('click', function(){
-    tabs.forEach(function(t){ t.classList.remove('active'); });
-    tab.classList.add('active');
-    currentFilter = tab.getAttribute('data-filter');
-    render();
-  });
-});
-
-function csvField(val){
-  var s = (val === null || val === undefined) ? '' : String(val);
-  if (/[",\\n]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"';
-  return s;
-}
-
-function exportCSV(){
-  var filtered = currentFilter === 'all' ? lastEvents : lastEvents.filter(function(e){ return e.type === currentFilter; });
-  if (!filtered.length){
-    statusLine.className = 'status-line error';
-    statusLine.textContent = 'Nothing to export for this filter.';
-    return;
-  }
-  var header = ['Type', 'Phone', 'Product', 'Size', 'When'];
-  var rows = filtered.map(function(e){
-    var badgeLabel = e.type === 'notified' ? 'Notified' : 'Signup';
-    return [
-      badgeLabel,
-      e.phone || '',
-      e.productTitle || '',
-      e.variantTitle || e.variantId || '',
-      fmtDate(e.ts)
-    ].map(csvField).join(',');
-  });
-  var csv = header.map(csvField).join(',') + '\\n' + rows.join('\\n');
-  var blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-  var url = URL.createObjectURL(blob);
-  var a = document.createElement('a');
-  var stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
-  a.href = url;
-  a.download = 'notify-me-' + currentFilter + '-' + stamp + '.csv';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
-}
-
-exportBtn.addEventListener('click', exportCSV);
-
-async function load(){
-  var key = (keyInput.value || '').trim();
-  if (!key){ statusLine.className = 'status-line error'; statusLine.textContent = 'Enter the admin key.'; return; }
-  try { localStorage.setItem('nim_admin_key', key); } catch(e){}
-  loadBtn.disabled = true; refreshBtn.disabled = true;
-  statusLine.className = 'status-line';
-  statusLine.textContent = 'Loading...';
   try {
-    var resp = await fetch('/admin/stats?key=' + encodeURIComponent(key));
-    if (resp.status === 401){
+    var savedKey = localStorage.getItem('nim_admin_key');
+    if (savedKey) keyInput.value = savedKey;
+  } catch (e) {}
+
+  function fmtDate(iso){ try { return new Date(iso).toLocaleString(); } catch(e){ return iso; } }
+  function fmtDateOnly(iso){ try { return new Date(iso).toLocaleDateString(); } catch(e){ return iso; } }
+  function fmtTimeOnly(iso){ try { return new Date(iso).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}); } catch(e){ return iso; } }
+
+  function render(){
+    var filtered = currentFilter === 'all' ? lastEvents : lastEvents.filter(function(e){ return e.type === currentFilter; });
+    tbody.innerHTML = '';
+    if (!filtered.length){ emptyState.hidden = false; }
+    else {
+      emptyState.hidden = true;
+      filtered.forEach(function(e){
+        var tr = document.createElement('tr');
+        var badgeClass = e.type === 'notified' ? 'notified' : 'signup';
+        var badgeLabel = e.type === 'notified' ? 'Notified' : 'Signup';
+        tr.innerHTML =
+          '<td><span class="badge ' + badgeClass + '">' + badgeLabel + '</span></td>' +
+          '<td>' + (e.phone || '') + '</td>' +
+          '<td>' + (e.productTitle || '') + '</td>' +
+          '<td>' + (e.variantTitle || e.variantId || '') + '</td>' +
+          '<td>' + fmtDate(e.ts) + '</td>';
+        tbody.appendChild(tr);
+      });
+    }
+  }
+
+  tabs.forEach(function(tab){
+    tab.addEventListener('click', function(){
+      tabs.forEach(function(t){ t.classList.remove('active'); });
+      tab.classList.add('active');
+      currentFilter = tab.getAttribute('data-filter');
+      render();
+    });
+  });
+
+  function csvField(val){
+    var s = (val === null || val === undefined) ? '' : String(val);
+    if (/[",\\n]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"';
+    return s;
+  }
+
+  function downloadCSV(header, rows, filenamePrefix){
+    if (!rows.length){
       statusLine.className = 'status-line error';
-      statusLine.textContent = 'Unauthorized - check the admin key.';
-      loadBtn.disabled = false; refreshBtn.disabled = false;
+      statusLine.textContent = 'Nothing to export.';
       return;
     }
-    if (!resp.ok) throw new Error('HTTP ' + resp.status);
-    var data = await resp.json();
-    lastEvents = data.events || [];
-    document.getElementById('statSignups').textContent = data.totalSignups != null ? data.totalSignups : '-';
-    document.getElementById('statNotified').textContent = data.totalNotified != null ? data.totalNotified : '-';
-    document.getElementById('statWaiting').textContent = data.currentlyWaiting != null ? data.currentlyWaiting : '-';
-    content.hidden = false;
-    statusLine.textContent = 'Last updated ' + new Date().toLocaleTimeString();
-    render();
-  } catch (err) {
-    statusLine.className = 'status-line error';
-    statusLine.textContent = 'Could not load stats (' + err.message + '). Wait a few seconds and click Refresh.';
-  } finally {
-    loadBtn.disabled = false; refreshBtn.disabled = false;
+    var csv = header.map(csvField).join(',') + '\\n' + rows.map(function(r){ return r.map(csvField).join(','); }).join('\\n');
+    var blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    var stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    a.href = url;
+    a.download = filenamePrefix + '-' + stamp + '.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
   }
-}
 
-loadBtn.addEventListener('click', load);
-refreshBtn.addEventListener('click', load);
-try { if (localStorage.getItem('nim_admin_key')) load(); } catch(e){}
+  function exportCSV(){
+    var filtered = currentFilter === 'all' ? lastEvents : lastEvents.filter(function(e){ return e.type === currentFilter; });
+    var header = ['Type', 'Phone', 'Product', 'Size', 'When'];
+    var rows = filtered.map(function(e){
+      var badgeLabel = e.type === 'notified' ? 'Notified' : 'Signup';
+      return [badgeLabel, e.phone || '', e.productTitle || '', e.variantTitle || e.variantId || '', fmtDate(e.ts)];
+    });
+    downloadCSV(header, rows, 'notify-me-' + currentFilter);
+  }
+
+  exportBtn.addEventListener('click', exportCSV);
+
+  function renderShopOrders(){
+    shopOrdersBody.innerHTML = '';
+    if (!lastShopOrders.length){ shopOrdersEmpty.hidden = false; return; }
+    shopOrdersEmpty.hidden = true;
+    lastShopOrders.forEach(function(o){
+      var tr = document.createElement('tr');
+      var badgeClass = o.status === 'Paid' ? 'paid' : (o.status === 'Cancelled' ? 'cancelled' : 'pending');
+      tr.innerHTML =
+        '<td>' + (o.product || '') + '</td>' +
+        '<td>' + (o.size || '') + '</td>' +
+        '<td>' + (o.qty != null ? o.qty : '') + '</td>' +
+        '<td><span class="badge ' + badgeClass + '">' + (o.status || '') + '</span></td>' +
+        '<td>' + fmtDateOnly(o.createdAt) + '</td>' +
+        '<td>' + fmtTimeOnly(o.createdAt) + '</td>';
+      shopOrdersBody.appendChild(tr);
+    });
+  }
+
+  function renderBestSellers(list){
+    shopBestSellersBody.innerHTML = '';
+    if (!list || !list.length){ shopBestSellersEmpty.hidden = false; return; }
+    shopBestSellersEmpty.hidden = true;
+    list.forEach(function(b){
+      var tr = document.createElement('tr');
+      tr.innerHTML =
+        '<td>' + (b.product || '') + '</td>' +
+        '<td>' + b.units + '</td>' +
+        '<td>' + b.share + '%</td>';
+      shopBestSellersBody.appendChild(tr);
+    });
+  }
+
+  function shopExportCSV(){
+    var header = ['Product', 'Size', 'Qty', 'Status', 'Date', 'Time'];
+    var rows = lastShopOrders.map(function(o){
+      return [o.product || '', o.size || '', o.qty != null ? o.qty : '', o.status || '', fmtDateOnly(o.createdAt), fmtTimeOnly(o.createdAt)];
+    });
+    downloadCSV(header, rows, 'evara-orders');
+  }
+
+  shopExportBtn.addEventListener('click', shopExportCSV);
+
+  async function loadShopifyStats(key){
+    try {
+      var resp = await fetch('/admin/shopify-stats?key=' + encodeURIComponent(key));
+      if (!resp.ok) {
+        var errBody = await resp.json().catch(function(){ return {}; });
+        shopifySection.hidden = false;
+        shopOrdersEmpty.hidden = false;
+        shopOrdersEmpty.textContent = errBody.error || ('Could not load store data (HTTP ' + resp.status + ').');
+        return;
+      }
+      var data = await resp.json();
+      shopifySection.hidden = false;
+      document.getElementById('shopOrdersCompleted').textContent = data.ordersCompleted;
+      document.getElementById('shopOrdersPending').textContent = data.ordersPending;
+      document.getElementById('shopOrdersCancelled').textContent = data.ordersCancelled;
+      document.getElementById('shopCustomers').textContent = data.totalCustomers;
+      lastShopOrders = data.recentOrders || [];
+      renderShopOrders();
+      renderBestSellers(data.bestSellers || []);
+    } catch (err) {
+      shopifySection.hidden = false;
+      shopOrdersEmpty.hidden = false;
+      shopOrdersEmpty.textContent = 'Could not load store data (' + err.message + ').';
+    }
+  }
+
+  shopRefreshBtn.addEventListener('click', function(){
+    var key = (keyInput.value || '').trim();
+    if (key) loadShopifyStats(key);
+  });
+
+  async function load(){
+    var key = (keyInput.value || '').trim();
+    if (!key){ statusLine.className = 'status-line error'; statusLine.textContent = 'Enter the admin key.'; return; }
+    try { localStorage.setItem('nim_admin_key', key); } catch(e){}
+    loadBtn.disabled = true; refreshBtn.disabled = true;
+    statusLine.className = 'status-line';
+    statusLine.textContent = 'Loading...';
+    try {
+      var resp = await fetch('/admin/stats?key=' + encodeURIComponent(key));
+      if (resp.status === 401){
+        statusLine.className = 'status-line error';
+        statusLine.textContent = 'Unauthorized - check the admin key.';
+        loadBtn.disabled = false; refreshBtn.disabled = false;
+        return;
+      }
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      var data = await resp.json();
+      lastEvents = data.events || [];
+      document.getElementById('statSignups').textContent = data.totalSignups != null ? data.totalSignups : '-';
+      document.getElementById('statNotified').textContent = data.totalNotified != null ? data.totalNotified : '-';
+      document.getElementById('statWaiting').textContent = data.currentlyWaiting != null ? data.currentlyWaiting : '-';
+      content.hidden = false;
+      statusLine.textContent = 'Last updated ' + new Date().toLocaleTimeString();
+      render();
+      loadShopifyStats(key);
+    } catch (err) {
+      statusLine.className = 'status-line error';
+      statusLine.textContent = 'Could not load stats (' + err.message + '). Wait a few seconds and click Refresh.';
+    } finally {
+      loadBtn.disabled = false; refreshBtn.disabled = false;
+    }
+  }
+
+  loadBtn.addEventListener('click', load);
+  refreshBtn.addEventListener('click', load);
+  try { if (localStorage.getItem('nim_admin_key')) load(); } catch(e){}
 })();
 </script>
 </body>
