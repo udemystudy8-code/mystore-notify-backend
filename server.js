@@ -717,7 +717,11 @@ tr:last-child td{border-bottom:none;}
 
   function renderShopOrders(){
     shopOrdersBody.innerHTML = '';
-    if (!lastShopOrders.length){ shopOrdersEmpty.hidden = false; return; }
+    if (!lastShopOrders.length){
+      shopOrdersEmpty.hidden = false;
+      shopOrdersEmpty.textContent = 'No orders yet.';
+      return;
+    }
     shopOrdersEmpty.hidden = true;
     lastShopOrders.forEach(function(o){
       var tr = document.createElement('tr');
